@@ -235,18 +235,25 @@ def send_telegram(event: Event) -> None:
 
 def main() -> int:
     seen = load_seen()
+    dry_run = os.environ.get("DRY_RUN", "true").lower() == "true"
+    send_requested = os.environ.get("SEND_TELEGRAM_REQUESTED", "false").lower() == "true"
+    missing_credentials = [name for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID") if not os.environ.get(name, "").strip()]
     events = scan_sources()
     print(f"Unique events with original image and registration link: {len(events)}")
     if SCAN_ERRORS:
-        print("ERROR: one or more configured sources could not be scanned: " + "; ".join(SCAN_ERRORS))
-        return 1
-    dry_run = os.environ.get("DRY_RUN", "true").lower() == "true"
+        message = "Some sources could not be scanned: " + "; ".join(SCAN_ERRORS)
+        if dry_run:
+            print("WARNING: " + message + ". Scan-only run will continue.")
+        else:
+            print("ERROR: " + message + ". Telegram send cancelled to avoid a partial scan.")
+            return 1
     if not dry_run:
-        missing = [name for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID") if not os.environ.get(name, "").strip()]
-        if missing:
-            print("ERROR: Telegram send requested, but required GitHub Actions secrets are missing: " + ", ".join(missing))
+        if missing_credentials:
+            print("ERROR: Telegram send requested, but required GitHub Actions secrets are missing: " + ", ".join(missing_credentials))
             return 1
     if dry_run:
+        if send_requested and missing_credentials:
+            print("WARNING: Telegram secrets are missing, so this run stayed scan-only; no Telegram message was sent.")
         for event in events:
             print(json.dumps(asdict(event), ensure_ascii=False))
         return 0
