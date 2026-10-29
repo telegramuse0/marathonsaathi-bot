@@ -24,7 +24,7 @@ SEEN_FILE = Path(os.environ.get("SEEN_FILE", "seen.json"))
 SOURCES = [
     {"name": "MarathonMitra", "url": "https://marathonmitra.com/city/kolkata", "host": "marathonmitra.com", "paths": ("/events/",)},
     {"name": "India Running", "url": "https://www.indiarunning.com/city/Kolkata", "host": "indiarunning.com", "paths": ("/event/", "/events/"), "registration_hosts": ("registrations.indiarunning.com",)},
-    {"name": "MySamay", "url": "https://mysamay.in/home", "host": "mysamay.in", "paths": ("/e/",)},
+    {"name": "MySamay", "url": "https://mysamay.in/", "host": "mysamay.in", "paths": ("/e/",)},
     {"name": "fstr", "url": "https://fstr.in/", "host": "fstr.in", "paths": ("/event/",)},
     {"name": "RunnersDuniya", "url": "https://runnersduniya.com/", "host": "runnersduniya.com", "paths": ("/event/", "/events/")},
     {"name": "MarathonTracks", "url": "https://marathontracks.com/marathons.php", "host": "marathontracks.com", "paths": ("/details.php",)},
@@ -82,6 +82,25 @@ def _image_url(node, page_url: str) -> str:
     return urljoin(page_url, image.get("src") or image.get("data-src") or image.get("data-lazy-src") or "")
 
 
+def _original_event_image(soup, title: str, page_url: str) -> str:
+    """Prefer OG artwork, then an event image whose alt text identifies the race."""
+    for attr, value in (("property", "og:image"), ("name", "twitter:image")):
+        tag = soup.find("meta", attrs={attr: value})
+        if tag and tag.get("content", "").strip():
+            return urljoin(page_url, tag["content"].strip())
+    title_words = {word.lower() for word in re.findall(r"[a-z0-9]{4,}", title)}
+    candidates = []
+    for image in soup.find_all("img"):
+        alt = (image.get("alt") or image.get("title") or "").lower()
+        src = image.get("src") or image.get("data-src") or image.get("data-lazy-src") or ""
+        if not src or re.search(r"logo|avatar|icon|profile|placeholder", alt + " " + src, re.I):
+            continue
+        words = set(re.findall(r"[a-z0-9]{4,}", alt))
+        if title_words and words.intersection(title_words):
+            candidates.append(src)
+    return urljoin(page_url, candidates[0]) if candidates else ""
+
+
 def _event_date(text: str) -> str:
     match = re.search(r"\b(?:\d{1,2}\s+[A-Za-z]{3,9}\.?[,]?\s+\d{4}|[A-Za-z]{3,9}\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{4})\b", text)
     return match.group(0) if match else ""
@@ -132,9 +151,7 @@ def event_from_page(source: dict, url: str) -> Event | None:
 
     title = meta("og:title", "twitter:title") or (soup.title.get_text(" ", strip=True) if soup.title else "")
     title = re.split(r"\s+[|–—]\s+", title, maxsplit=1)[0].strip()
-    image = meta("og:image", "twitter:image")
-    if image:
-        image = urljoin(url, image)
+    image = _original_event_image(soup, title, url)
     # Registration must be a real link; do not substitute an event/listing page.
     reg = ""
     for a in soup.find_all("a", href=True):
