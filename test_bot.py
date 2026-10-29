@@ -30,6 +30,12 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(event.image_url, "https://www.indiarunning.com/poster.jpg")
         self.assertEqual(event.registration_url, "https://registrations.indiarunning.com/city-run")
 
+    def test_unparseable_source_is_reported_as_scan_error(self):
+        source = {"name": "Example", "url": "https://example.test/list", "host": "example.test", "paths": ("/event/",)}
+        with patch.object(bot, "SOURCES", [source]), patch.object(bot, "get", return_value="<html><body>No race links</body></html>"):
+            self.assertEqual(bot.scan_sources(), [])
+        self.assertEqual(bot.SCAN_ERRORS, ["Example: no parseable event links"])
+
     def test_event_requires_original_image_and_registration_link(self):
         source = {"name": "Example"}
         page = '<meta property="og:title" content="City Run 2027"><meta property="og:image" content="/original.jpg"><a href="https://register.test/r1">Register now</a>'
@@ -48,6 +54,7 @@ class ScannerTests(unittest.TestCase):
     @patch.object(bot, "scan_sources", return_value=[])
     @patch.object(bot, "load_seen", return_value=set())
     def test_missing_telegram_credentials_fail_closed(self, _seen, _scan):
+        bot.SCAN_ERRORS.clear()
         self.assertEqual(bot.main(), 1)
 
     def test_only_future_events_pass_the_date_filter(self):
