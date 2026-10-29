@@ -30,6 +30,7 @@ SOURCES = [
     {"name": "MarathonTracks", "url": "https://marathontracks.com/marathons.php", "host": "marathontracks.com", "paths": ("/details.php",)},
     {"name": "runINDIA", "url": "https://www.runindia.in/events", "host": "runindia.in", "paths": ("/events/",)},
 ]
+SCAN_ERRORS: list[str] = []
 
 
 @dataclass(frozen=True)
@@ -149,6 +150,7 @@ def event_from_page(source: dict, url: str) -> Event | None:
 
 
 def scan_sources() -> list[Event]:
+    SCAN_ERRORS.clear()
     found: dict[str, Event] = {}
     for source in SOURCES:
         try:
@@ -172,8 +174,10 @@ def scan_sources() -> list[Event]:
             print(f"{source['name']}: {len(links)} event pages, {len(card_events)} registration cards, {added} usable events")
             if not links and not card_events:
                 print(f"WARNING: {source['name']} returned no parseable event links; check its listing markup")
+                SCAN_ERRORS.append(f"{source['name']}: no parseable event links")
         except Exception as exc:
             print(f"Source unavailable ({source['name']}): {exc}")
+            SCAN_ERRORS.append(f"{source['name']}: {exc}")
     return list(found.values())
 
 
@@ -215,6 +219,9 @@ def main() -> int:
     seen = load_seen()
     events = scan_sources()
     print(f"Unique events with original image and registration link: {len(events)}")
+    if SCAN_ERRORS:
+        print("ERROR: one or more configured sources could not be scanned: " + "; ".join(SCAN_ERRORS))
+        return 1
     dry_run = os.environ.get("DRY_RUN", "true").lower() == "true"
     if not dry_run:
         missing = [name for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID") if not os.environ.get(name, "").strip()]
