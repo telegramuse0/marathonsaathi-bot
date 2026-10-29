@@ -24,7 +24,7 @@ SEEN_FILE = Path(os.environ.get("SEEN_FILE", "seen.json"))
 SOURCES = [
     {"name": "MarathonMitra", "url": "https://marathonmitra.com/city/kolkata", "host": "marathonmitra.com", "paths": ("/events/",)},
     {"name": "India Running", "url": "https://www.indiarunning.com/city/Kolkata", "host": "indiarunning.com", "paths": ("/event/", "/events/"), "registration_hosts": ("registrations.indiarunning.com",)},
-    {"name": "MySamay", "url": "https://mysamay.in/", "host": "mysamay.in", "paths": ("/e/", "/event/info/")},
+    {"name": "MySamay", "url": "https://www.mysamay.in/public/events", "host": "mysamay.in", "paths": ("/e/", "/event/info/"), "allow_empty": True},
     {"name": "fstr", "url": "https://fstr.in/", "host": "fstr.in", "paths": ("/event/",)},
     {"name": "RunnersDuniya", "url": "https://runnersduniya.com/", "host": "runnersduniya.com", "paths": ("/event/", "/events/")},
     {"name": "MarathonTracks", "url": "https://marathontracks.com/marathons.php", "host": "marathontracks.com", "paths": ("/details.php",)},
@@ -190,8 +190,9 @@ def scan_sources() -> list[Event]:
             added = len(found) - before
             print(f"{source['name']}: {len(links)} event pages, {len(card_events)} registration cards, {added} usable events")
             if not links and not card_events:
-                print(f"WARNING: {source['name']} returned no parseable event links; check its listing markup")
-                SCAN_ERRORS.append(f"{source['name']}: no parseable event links")
+                print(f"WARNING: {source['name']} listing has no event links right now")
+                if not source.get("allow_empty", False):
+                    SCAN_ERRORS.append(f"{source['name']}: no parseable event links")
         except Exception as exc:
             print(f"Source unavailable ({source['name']}): {exc}")
             SCAN_ERRORS.append(f"{source['name']}: {exc}")
