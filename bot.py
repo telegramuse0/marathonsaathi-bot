@@ -9,6 +9,7 @@ import re
 import time
 import unicodedata
 from dataclasses import asdict, dataclass
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, urlunparse
 
@@ -19,15 +20,15 @@ HEADERS = {"User-Agent": "MarathonSaathiBot/2.0 (+event discovery; contact: repo
 TIMEOUT = 25
 SEEN_FILE = Path(os.environ.get("SEEN_FILE", "seen.json"))
 
-# Add a source here to extend coverage. Each URL must be a public event-listing page.
+# Add a source here to extend coverage. Listing and detail URL patterns are per-site.
 SOURCES = [
     {"name": "MarathonMitra", "url": "https://marathonmitra.com/city/kolkata", "host": "marathonmitra.com", "paths": ("/events/",)},
-    {"name": "Townscript", "url": "https://www.townscript.com/in/india/marathons", "host": "townscript.com", "paths": ("/e/", "/event/",)},
-    {"name": "India Running", "url": "https://www.indiarunning.com/events", "host": "indiarunning.com", "paths": ("/event/", "/events/",)},
-    {"name": "MySamay", "url": "https://mysamay.in/", "host": "mysamay.in", "paths": ("/event/", "/events/",)},
-    {"name": "fstr", "url": "https://fstr.in/events", "host": "fstr.in", "paths": ("/events/",)},
-    {"name": "RunnersDuniya", "url": "https://runnersduniya.com/", "host": "runnersduniya.com", "paths": ("/event/", "/events/",)},
-    {"name": "MarathonTracks", "url": "https://www.marathontracks.com/", "host": "marathontracks.com", "paths": ("/race/", "/event/", "/marathon/",)},
+    {"name": "India Running", "url": "https://www.indiarunning.com/city/Kolkata", "host": "indiarunning.com", "paths": ("/event/", "/events/"), "registration_hosts": ("registrations.indiarunning.com",)},
+    {"name": "MySamay", "url": "https://mysamay.in/home", "host": "mysamay.in", "paths": ("/e/",)},
+    {"name": "fstr", "url": "https://fstr.in/", "host": "fstr.in", "paths": ("/event/",)},
+    {"name": "RunnersDuniya", "url": "https://runnersduniya.com/", "host": "runnersduniya.com", "paths": ("/event/", "/events/")},
+    {"name": "MarathonTracks", "url": "https://marathontracks.com/marathons.php", "host": "marathontracks.com", "paths": ("/details.php",)},
+    {"name": "runINDIA", "url": "https://www.runindia.in/events", "host": "runindia.in", "paths": ("/events/",)},
 ]
 
 
@@ -39,6 +40,7 @@ class Event:
     registration_url: str
     image_url: str
     source: str
+    date: str = ""
 
 
 def get(url: str) -> str:
@@ -49,7 +51,7 @@ def get(url: str) -> str:
 
 def normalize_url(url: str) -> str:
     parsed = urlparse(url)
-    return urlunparse((parsed.scheme.lower(), parsed.netloc.lower().removeprefix("www."), parsed.path.rstrip("/"), "", "", ""))
+    return urlunparse((parsed.scheme.lower(), parsed.netloc.lower().removeprefix("www."), parsed.path.rstrip("/"), parsed.params, parsed.query, ""))
 
 
 def event_links(source: dict, html: str) -> list[str]:
@@ -63,10 +65,59 @@ def event_links(source: dict, html: str) -> list[str]:
             continue
         if not any(parsed.path.lower().startswith(path) for path in source["paths"]):
             continue
-        if len(parsed.path.strip("/").split("/")) < 2:
+        if parsed.path.lower().endswith(".php"):
+            if not parsed.query:
+                continue
+        elif len(parsed.path.strip("/").split("/")) < 2:
             continue
         links.add(normalize_url(href))
     return sorted(links)
+
+
+def _image_url(node, page_url: str) -> str:
+    image = node.find("img")
+    if not image:
+        return ""
+    return urljoin(page_url, image.get("src") or image.get("data-src") or image.get("data-lazy-src") or "")
+
+
+def _event_date(text: str) -> str:
+    match = re.search(r"\b(?:\d{1,2}\s+[A-Za-z]{3,9}\.?[,]?\s+\d{4}|[A-Za-z]{3,9}\.?\s+\d{1,2},?\s+\d{4}|\d{1,2}[/-]\d{1,2}[/-]\d{4})\b", text)
+    return match.group(0) if match else ""
+
+
+def _card_event(source: dict, anchor, listing_url: str) -> Event | None:
+    href = urljoin(listing_url, anchor.get("href", ""))
+    host = urlparse(href).netloc.lower().removeprefix("www.")
+    if host not in source.get("registration_hosts", ()):
+        return None
+    label = anchor.get_text(" ", strip=True).lower()
+    if not re.search(r"register|registration|book\s*now", label):
+        return None
+    card = anchor
+    for _ in range(7):
+        if not getattr(card, "parent", None):
+            break
+        card = card.parent
+        if card.find(["h1", "h2", "h3", "h4"]) and card.find("img"):
+            break
+    heading = card.find(["h1", "h2", "h3", "h4"])
+    title = heading.get_text(" ", strip=True) if heading else ""
+    image = _image_url(card, listing_url)
+    date_text = card.get_text(" ", strip=True)
+    return _make_event(source, title, listing_url, href, image, date_text)
+
+
+def _make_event(source: dict, title: str, event_url: str, registration_url: str, image_url: str, date_text: str = "") -> Event | None:
+    title = re.split(r"\s+[|–—]\s+", title, maxsplit=1)[0].strip()
+    if not title or not image_url or not registration_url:
+        return None
+    clean_title = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode().lower()
+    clean_title = re.sub(r"[^a-z0-9]+", " ", clean_title).strip()
+    event_date = _event_date(date_text)
+    identity = f"{clean_title}|{event_date.lower()}"
+    key = hashlib.sha256(identity.encode()).hexdigest()
+    return Event(key, title, normalize_url(event_url), normalize_url(registration_url), image_url, source["name"], event_date)
 
 
 def event_from_page(source: dict, url: str) -> Event | None:
@@ -93,10 +144,8 @@ def event_from_page(source: dict, url: str) -> Event | None:
             break
     if not title or not image or not reg:
         return None
-    normalized_title = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode().lower()
-    normalized_title = re.sub(r"[^a-z0-9]+", " ", normalized_title).strip()
-    key = hashlib.sha256(normalized_title.encode()).hexdigest()
-    return Event(key, title, url, reg, image, source["name"])
+    page_text = soup.get_text(" ", strip=True)
+    return _make_event(source, title, url, reg, image, page_text)
 
 
 def scan_sources() -> list[Event]:
@@ -104,8 +153,13 @@ def scan_sources() -> list[Event]:
     for source in SOURCES:
         try:
             # Bound work per source so one large catalogue cannot exhaust the runner.
-            links = event_links(source, get(source["url"]))[:50]
-            print(f"{source['name']}: {len(links)} event links")
+            html = get(source["url"])
+            soup = BeautifulSoup(html, "html.parser")
+            links = event_links(source, html)[:50]
+            card_events = [e for a in soup.find_all("a", href=True) if (e := _card_event(source, a, source["url"]))]
+            before = len(found)
+            for event in card_events:
+                found.setdefault(event.key, event)
             for link in links:
                 try:
                     event = event_from_page(source, link)
@@ -114,6 +168,10 @@ def scan_sources() -> list[Event]:
                 except Exception as exc:
                     print(f"Skip {link}: {exc}")
                 time.sleep(0.15)
+            added = len(found) - before
+            print(f"{source['name']}: {len(links)} event pages, {len(card_events)} registration cards, {added} usable events")
+            if not links and not card_events:
+                print(f"WARNING: {source['name']} returned no parseable event links; check its listing markup")
         except Exception as exc:
             print(f"Source unavailable ({source['name']}): {exc}")
     return list(found.values())
@@ -125,6 +183,17 @@ def load_seen() -> set[str]:
         return set(data if isinstance(data, list) else data.keys())
     except FileNotFoundError:
         return set()
+
+
+def is_upcoming(event: Event) -> bool:
+    if not event.date:
+        return False
+    for fmt in ("%d %b %Y", "%d %b, %Y", "%d %B %Y", "%d %B, %Y", "%b %d, %Y", "%b %d %Y", "%B %d, %Y", "%B %d %Y", "%m/%d/%Y", "%d/%m/%Y"):
+        try:
+            return datetime.strptime(event.date, fmt).date() >= date.today()
+        except ValueError:
+            continue
+    return False
 
 
 def send_telegram(event: Event) -> None:
@@ -146,22 +215,37 @@ def main() -> int:
     seen = load_seen()
     events = scan_sources()
     print(f"Unique events with original image and registration link: {len(events)}")
-    if os.environ.get("DRY_RUN", "true").lower() == "true":
+    dry_run = os.environ.get("DRY_RUN", "true").lower() == "true"
+    if not dry_run:
+        missing = [name for name in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID") if not os.environ.get(name, "").strip()]
+        if missing:
+            print("ERROR: Telegram send requested, but required GitHub Actions secrets are missing: " + ", ".join(missing))
+            return 1
+    if dry_run:
         for event in events:
             print(json.dumps(asdict(event), ensure_ascii=False))
         return 0
-    for event in events:
-        if event.key in seen:
-            continue
+    pending = [event for event in events if event.key not in seen and is_upcoming(event)]
+    print(f"Upcoming, unseen events: {len(pending)}")
+    batch = pending[:3]
+    if len(pending) > len(batch):
+        print(f"Safety limit: sending at most {len(batch)} events this run; {len(pending) - len(batch)} remain for a later run.")
+    failures = []
+    for event in batch:
         try:
             send_telegram(event)
             seen.add(event.key)
             print(f"Sent: {event.title}")
         except Exception as exc:
             print(f"Send failed ({event.title}): {exc}")
+            failures.append(event.title)
     SEEN_FILE.write_text(json.dumps(sorted(seen), indent=2) + "\n", encoding="utf-8")
+    if failures:
+        print(f"ERROR: {len(failures)} Telegram delivery attempt(s) failed.")
+        return 1
     return 0
 
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
