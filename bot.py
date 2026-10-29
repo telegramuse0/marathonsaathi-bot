@@ -43,8 +43,8 @@ def details(url):
     soup = BeautifulSoup(get(url), "html.parser")
     og = soup.find("meta", property="og:title")
     title = (og["content"] if og and og.get("content") else (soup.title.string if soup.title else "")).strip()
-    title = re.split(r"\s*\|\s*MarathonMitra", title)[0]
-    title = re.sub(r"\s+in\s+[A-Z][A-Za-z ]+$", "", title).strip()
+        title = re.split(r"\s*\|", title)[0]
+    title = re.sub(r"\s+in\s+(Kolkata|Siliguri|Durgapur|Darjeeling|Howrah|Asansol)\s*$", "", title, flags=re.I).strip(" .-")
     d = soup.find("meta", property="og:description")
     desc = d["content"] if d and d.get("content") else ""
     text = desc + " " + soup.get_text(" ", strip=True)[:1500]
