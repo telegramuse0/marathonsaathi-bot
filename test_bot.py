@@ -8,11 +8,27 @@ class ScannerTests(unittest.TestCase):
     def test_all_seven_listing_sources_are_configured(self):
         self.assertEqual(len(bot.SOURCES), 7)
         self.assertEqual(len({s["host"] for s in bot.SOURCES}), 7)
+        self.assertEqual({s["name"] for s in bot.SOURCES}, {"MarathonMitra", "India Running", "MySamay", "fstr", "RunnersDuniya", "MarathonTracks", "runINDIA"})
 
     def test_event_links_reject_other_hosts_and_keep_configured_event_paths(self):
         source = {"url": "https://example.test/events", "host": "example.test", "paths": ("/event/",)}
         links = bot.event_links(source, '<a href="/event/race-1">race</a><a href="https://evil.test/event/no">x</a><a href="/blog/event/post">x</a>')
         self.assertEqual(links, ["https://example.test/event/race-1"])
+
+    def test_marathontracks_detail_url_keeps_slug_query(self):
+        source = {"url": "https://marathontracks.com/marathons.php", "host": "marathontracks.com", "paths": ("/details.php",)}
+        links = bot.event_links(source, '<a href="/details.php?slug=hoysala-hustle-2026">Race</a>')
+        self.assertEqual(links, ["https://marathontracks.com/details.php?slug=hoysala-hustle-2026"])
+
+    def test_india_running_card_requires_original_image_and_register_link(self):
+        source = {"name": "India Running", "registration_hosts": ("registrations.indiarunning.com",)}
+        html = '<article><h3>City Run 2027</h3><img src="/poster.jpg"><a href="https://registrations.indiarunning.com/city-run">Register</a></article>'
+        from bs4 import BeautifulSoup
+        anchor = BeautifulSoup(html, "html.parser").find("a")
+        event = bot._card_event(source, anchor, "https://www.indiarunning.com/city/Kolkata")
+        self.assertEqual(event.title, "City Run 2027")
+        self.assertEqual(event.image_url, "https://www.indiarunning.com/poster.jpg")
+        self.assertEqual(event.registration_url, "https://registrations.indiarunning.com/city-run")
 
     def test_event_requires_original_image_and_registration_link(self):
         source = {"name": "Example"}
@@ -28,6 +44,18 @@ class ScannerTests(unittest.TestCase):
         with patch.object(bot, "get", return_value=page):
             self.assertIsNone(bot.event_from_page({"name": "Example"}, "https://example.test/event/city-run"))
 
+    @patch.dict("os.environ", {"DRY_RUN": "false", "TELEGRAM_BOT_TOKEN": "", "TELEGRAM_CHAT_ID": ""}, clear=True)
+    @patch.object(bot, "scan_sources", return_value=[])
+    @patch.object(bot, "load_seen", return_value=set())
+    def test_missing_telegram_credentials_fail_closed(self, _seen, _scan):
+        self.assertEqual(bot.main(), 1)
+
+    def test_only_future_events_pass_the_date_filter(self):
+        today = bot.date.today().strftime("%d %b %Y")
+        event = bot.Event("k", "Run", "https://e", "https://r", "https://i", "test", today)
+        self.assertTrue(bot.is_upcoming(event))
+        self.assertFalse(bot.is_upcoming(bot.Event("k", "Run", "https://e", "https://r", "https://i", "test")))
+
     @patch.dict("os.environ", {"TELEGRAM_BOT_TOKEN": "token", "TELEGRAM_CHAT_ID": "42"})
     @patch.object(bot.requests, "post")
     def test_telegram_uses_sendphoto_with_original_image_and_registration_link(self, post):
@@ -42,3 +70,4 @@ class ScannerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
