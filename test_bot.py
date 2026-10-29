@@ -50,6 +50,20 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(bot.scan_sources(), [])
         self.assertEqual(bot.SCAN_ERRORS, [])
 
+    @patch.dict("os.environ", {"DRY_RUN": "true"}, clear=True)
+    @patch.object(bot, "scan_sources", return_value=[])
+    @patch.object(bot, "load_seen", return_value=set())
+    def test_scan_only_does_not_fail_when_source_is_temporarily_unavailable(self, _seen, _scan):
+        bot.SCAN_ERRORS[:] = ["Example: temporary network error"]
+        self.assertEqual(bot.main(), 0)
+
+    @patch.dict("os.environ", {"DRY_RUN": "true", "SEND_TELEGRAM_REQUESTED": "true", "TELEGRAM_BOT_TOKEN": "", "TELEGRAM_CHAT_ID": ""}, clear=True)
+    @patch.object(bot, "scan_sources", return_value=[])
+    @patch.object(bot, "load_seen", return_value=set())
+    def test_send_requested_without_secrets_stays_scan_only(self, _seen, _scan):
+        bot.SCAN_ERRORS.clear()
+        self.assertEqual(bot.main(), 0)
+
     def test_event_requires_original_image_and_registration_link(self):
         source = {"name": "Example"}
         page = '<meta property="og:title" content="City Run 2027"><meta property="og:image" content="/original.jpg"><a href="https://register.test/r1">Register now</a>'
