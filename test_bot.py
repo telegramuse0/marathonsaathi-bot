@@ -44,6 +44,12 @@ class ScannerTests(unittest.TestCase):
             self.assertEqual(bot.scan_sources(), [])
         self.assertEqual(bot.SCAN_ERRORS, ["Example: no parseable event links"])
 
+    def test_known_empty_listing_is_warning_only(self):
+        source = {"name": "MySamay", "url": "https://example.test/list", "host": "example.test", "paths": ("/event/",), "allow_empty": True}
+        with patch.object(bot, "SOURCES", [source]), patch.object(bot, "get", return_value="<html><body>No upcoming events</body></html>"):
+            self.assertEqual(bot.scan_sources(), [])
+        self.assertEqual(bot.SCAN_ERRORS, [])
+
     def test_event_requires_original_image_and_registration_link(self):
         source = {"name": "Example"}
         page = '<meta property="og:title" content="City Run 2027"><meta property="og:image" content="/original.jpg"><a href="https://register.test/r1">Register now</a>'
