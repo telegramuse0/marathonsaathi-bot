@@ -45,6 +45,11 @@ class ScannerTests(unittest.TestCase):
         self.assertEqual(event.image_url, "https://example.test/original.jpg")
         self.assertEqual(event.registration_url, "https://register.test/r1")
 
+    def test_image_fallback_uses_only_race_identified_source_image(self):
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup('<img alt="Site logo" src="/logo.png"><img alt="City Run 2027 event poster" src="/race.jpg">', "html.parser")
+        self.assertEqual(bot._original_event_image(soup, "City Run 2027", "https://example.test/e/1"), "https://example.test/race.jpg")
+
     def test_event_without_artwork_or_registration_is_skipped(self):
         page = '<meta property="og:title" content="City Run"><a href="https://example.test/event/city-run">Details</a>'
         with patch.object(bot, "get", return_value=page):
