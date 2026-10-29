@@ -1,179 +1,167 @@
-import os, re, json, time, subprocess, textwrap
+"""Find Indian running events and send their original artwork to Telegram."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import re
+import time
+import unicodedata
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from urllib.parse import urljoin, urlparse, urlunparse
+
 import requests
 from bs4 import BeautifulSoup
-from PIL import Image, ImageDraw, ImageFont
 
-BASE = "https://marathonmitra.com"
-CITIES = ["kolkata", "siliguri", "durgapur", "darjeeling"]
-HEAD = {"User-Agent": "MarathonSaathiBot/1.0 (facts only, source credited)"}
-DRY = os.environ.get("DRY_RUN", "true").lower() == "true"
-TEST_ONE = os.environ.get("TEST_ONE", "false").lower() == "true"
-FB = "https://graph.facebook.com/v26.0"
-IG = "https://graph.instagram.com/v26.0"
-REPO = os.environ.get("GITHUB_REPOSITORY", "")
-BRANCH = os.environ.get("GITHUB_REF_NAME", "main")
-BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-REG = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
-MON = "Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec"
+HEADERS = {"User-Agent": "MarathonSaathiBot/2.0 (+event discovery; contact: repo owner)"}
+TIMEOUT = 25
+SEEN_FILE = Path(os.environ.get("SEEN_FILE", "seen.json"))
 
-
-def get(url):
-    r = requests.get(url, headers=HEAD, timeout=30)
-    r.raise_for_status()
-    return r.text
+# Add a source here to extend coverage. Each URL must be a public event-listing page.
+SOURCES = [
+    {"name": "MarathonMitra", "url": "https://marathonmitra.com/city/kolkata", "host": "marathonmitra.com", "paths": ("/events/",)},
+    {"name": "Townscript", "url": "https://www.townscript.com/in/india/marathons", "host": "townscript.com", "paths": ("/e/", "/event/",)},
+    {"name": "India Running", "url": "https://www.indiarunning.com/events", "host": "indiarunning.com", "paths": ("/event/", "/events/",)},
+    {"name": "MySamay", "url": "https://mysamay.in/", "host": "mysamay.in", "paths": ("/event/", "/events/",)},
+    {"name": "fstr", "url": "https://fstr.in/events", "host": "fstr.in", "paths": ("/events/",)},
+    {"name": "RunnersDuniya", "url": "https://runnersduniya.com/", "host": "runnersduniya.com", "paths": ("/event/", "/events/",)},
+    {"name": "MarathonTracks", "url": "https://www.marathontracks.com/", "host": "marathontracks.com", "paths": ("/race/", "/event/", "/marathon/",)},
+]
 
 
-def list_events():
-    found = {}
-    for c in CITIES:
-        try:
-            html = get(f"{BASE}/city/{c}")
-        except Exception as e:
-            print("skip", c, e)
+@dataclass(frozen=True)
+class Event:
+    key: str
+    title: str
+    event_url: str
+    registration_url: str
+    image_url: str
+    source: str
+
+
+def get(url: str) -> str:
+    response = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+    response.raise_for_status()
+    return response.text
+
+
+def normalize_url(url: str) -> str:
+    parsed = urlparse(url)
+    return urlunparse((parsed.scheme.lower(), parsed.netloc.lower().removeprefix("www."), parsed.path.rstrip("/"), "", "", ""))
+
+
+def event_links(source: dict, html: str) -> list[str]:
+    soup = BeautifulSoup(html, "html.parser")
+    links = set()
+    for anchor in soup.find_all("a", href=True):
+        href = urljoin(source["url"], anchor["href"])
+        parsed = urlparse(href)
+        host = parsed.netloc.lower().removeprefix("www.")
+        if host != source["host"] and not host.endswith("." + source["host"]):
             continue
-        for a in BeautifulSoup(html, "html.parser").find_all("a", href=True):
-            m = re.match(r"^(?:https://marathonmitra\.com)?/events/([a-z0-9\-]+)/?$", a["href"])
-            if m:
-                found[m.group(1)] = f"{BASE}/events/{m.group(1)}"
-        time.sleep(2)
-    return found
+        if not any(parsed.path.lower().startswith(path) for path in source["paths"]):
+            continue
+        if len(parsed.path.strip("/").split("/")) < 2:
+            continue
+        links.add(normalize_url(href))
+    return sorted(links)
 
 
-def details(url):
+def event_from_page(source: dict, url: str) -> Event | None:
     soup = BeautifulSoup(get(url), "html.parser")
-    og = soup.find("meta", property="og:title")
-    title = (og["content"] if og and og.get("content") else (soup.title.string if soup.title else "")).strip()
-        title = re.split(r"\s*\|", title)[0]
-    title = re.sub(r"\s+in\s+(Kolkata|Siliguri|Durgapur|Darjeeling|Howrah|Asansol)\s*$", "", title, flags=re.I).strip(" .-")
-    d = soup.find("meta", property="og:description")
-    desc = d["content"] if d and d.get("content") else ""
-    text = desc + " " + soup.get_text(" ", strip=True)[:1500]
-    dm = re.search(rf"\b(\d{{1,2}}\s+(?:{MON})[a-z]*\s+\d{{4}}|(?:{MON})[a-z]*\s+\d{{1,2}},?\s+\d{{4}})", text)
-    dist = []
-    for x in re.findall(r"\b(\d{1,2}(?:\.\d)?\s?K\b|Half Marathon|Full Marathon)", text):
-        if x not in dist:
-            dist.append(x)
-    return {"title": title, "date": dm.group(1) if dm else "", "dist": ", ".join(dist[:6])}
+    def meta(*names: str) -> str:
+        for name in names:
+            node = soup.find("meta", attrs={"property": name}) or soup.find("meta", attrs={"name": name})
+            if node and node.get("content", "").strip():
+                return node["content"].strip()
+        return ""
 
-
-def make_poster(info, slug):
-    W = H = 1080
-    img = Image.new("RGB", (W, H))
-    d = ImageDraw.Draw(img)
-    for y in range(H):
-        d.line([(0, y), (W, y)], fill=(11, 60 + y // 14, 46 + y // 16))
-    d.text((70, 70), "MARATHON SAATHI", font=ImageFont.truetype(BOLD, 40), fill="#ffd54a")
-    size, width = 88, 16
-    lines = textwrap.wrap(info["title"].upper(), width)
-    if len(lines) > 4:
-        size, width = 66, 22
-        lines = textwrap.wrap(info["title"].upper(), width)[:5]
-    f = ImageFont.truetype(BOLD, size)
-    y = 200
-    for ln in lines:
-        d.text((70, y), ln, font=f, fill="white")
-        y += size + 14
-    small = ImageFont.truetype(REG, 46)
-    if info["date"]:
-        d.text((70, y + 40), "Date: " + info["date"], font=small, fill="#ffd54a")
-        y += 70
-    if info["dist"]:
-        y += 40
-        for ln in textwrap.wrap("Distance: " + info["dist"], 30)[:4]:
-            d.text((70, y), ln, font=small, fill="white")
-            y += 60
-    d.text((70, H - 110), "Registration link in caption", font=ImageFont.truetype(REG, 36), fill="#cfe8dc")
-    path = f"posters/{slug}.png"
-    img.save(path)
-    return path
-
-
-def make_caption(info, url):
-    lines = [info["title"]]
-    if info["date"]:
-        lines.append("Date: " + info["date"])
-    if info["dist"]:
-        lines.append("Distance: " + info["dist"])
-    lines += ["", "Registration & details: " + url,
-              "Source: MarathonMitra. Please confirm on the official page before registering.",
-              "", "#Marathon #Running #Kolkata #WestBengal #MarathonSaathi"]
-    return "\n".join(lines)
-
-
-def git_push(msg):
-    for c in (["git", "config", "user.name", "marathon-bot"],
-              ["git", "config", "user.email", "bot@users.noreply.github.com"],
-              ["git", "add", "-A"]):
-        subprocess.run(c, check=True)
-    if subprocess.run(["git", "diff", "--cached", "--quiet"]).returncode:
-        subprocess.run(["git", "commit", "-m", msg], check=True)
-        subprocess.run(["git", "push"], check=True)
-
-
-def post_fb(path, cap):
-    with open(path, "rb") as f:
-        r = requests.post(f"{FB}/{os.environ['FB_PAGE_ID']}/photos",
-                          data={"caption": cap, "access_token": os.environ["FB_PAGE_TOKEN"]},
-                          files={"source": f}, timeout=60)
-    print("FB", r.status_code, r.text[:200])
-    r.raise_for_status()
-
-
-def post_ig(img_url, cap):
-    tok, uid = os.environ["IG_TOKEN"], os.environ["IG_USER_ID"]
-    r = requests.post(f"{IG}/{uid}/media",
-                      data={"image_url": img_url, "caption": cap, "access_token": tok}, timeout=60)
-    print("IG create", r.status_code, r.text[:200])
-    r.raise_for_status()
-    cid = r.json()["id"]
-    for _ in range(10):
-        s = requests.get(f"{IG}/{cid}", params={"fields": "status_code", "access_token": tok}, timeout=30).json()
-        if s.get("status_code") == "FINISHED":
+    title = meta("og:title", "twitter:title") or (soup.title.get_text(" ", strip=True) if soup.title else "")
+    title = re.split(r"\s+[|–—]\s+", title, maxsplit=1)[0].strip()
+    image = meta("og:image", "twitter:image")
+    if image:
+        image = urljoin(url, image)
+    # Registration must be a real link; do not substitute an event/listing page.
+    reg = ""
+    for a in soup.find_all("a", href=True):
+        label = a.get_text(" ", strip=True).lower()
+        href = urljoin(url, a["href"])
+        if re.search(r"register|registration|sign\s*up|book\s*now", label) and urlparse(href).scheme in ("http", "https"):
+            reg = normalize_url(href)
             break
-        time.sleep(5)
-    r = requests.post(f"{IG}/{uid}/media_publish",
-                      data={"creation_id": cid, "access_token": tok}, timeout=60)
-    print("IG publish", r.status_code, r.text[:200])
-    r.raise_for_status()
+    if not title or not image or not reg:
+        return None
+    normalized_title = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode().lower()
+    normalized_title = re.sub(r"[^a-z0-9]+", " ", normalized_title).strip()
+    key = hashlib.sha256(normalized_title.encode()).hexdigest()
+    return Event(key, title, url, reg, image, source["name"])
 
 
-def main():
-    seen = json.load(open("seen.json")) if os.path.exists("seen.json") else []
-    events = list_events()
-    print("events found:", len(events))
-    if not events:
-        return
-    if not seen and not TEST_ONE:
-        json.dump(sorted(events), open("seen.json", "w"))
-        print("First run: purane events save kiye, kuch post nahi hua.")
-        return
-    new = list(events)[:1] if TEST_ONE else [s for s in events if s not in seen]
-    os.makedirs("posters", exist_ok=True)
-    os.makedirs("drafts", exist_ok=True)
-    for slug in new[:3]:
-        url = events[slug]
-        info = details(url)
-        img = make_poster(info, slug)
-        cap = make_caption(info, url)
-        open(f"drafts/{slug}.txt", "w").write(cap)
-        ok = DRY
-        if not DRY:
-            git_push(f"poster {slug}")
-            img_url = f"https://raw.githubusercontent.com/{REPO}/{BRANCH}/{img}"
-            for _ in range(12):
-                if requests.head(img_url, timeout=20).status_code == 200:
-                    break
-                time.sleep(5)
-            for fn, arg in ((post_fb, img), (post_ig, img_url)):
+def scan_sources() -> list[Event]:
+    found: dict[str, Event] = {}
+    for source in SOURCES:
+        try:
+            # Bound work per source so one large catalogue cannot exhaust the runner.
+            links = event_links(source, get(source["url"]))[:50]
+            print(f"{source['name']}: {len(links)} event links")
+            for link in links:
                 try:
-                    fn(arg, cap)
-                    ok = True
-                except Exception as e:
-                    print("POST FAIL", fn.__name__, e)
-        if ok and not TEST_ONE:
-            seen.append(slug)
-    if not TEST_ONE:
-        json.dump(seen, open("seen.json", "w"))
+                    event = event_from_page(source, link)
+                    if event:
+                        found.setdefault(event.key, event)
+                except Exception as exc:
+                    print(f"Skip {link}: {exc}")
+                time.sleep(0.15)
+        except Exception as exc:
+            print(f"Source unavailable ({source['name']}): {exc}")
+    return list(found.values())
 
 
-main()
+def load_seen() -> set[str]:
+    try:
+        data = json.loads(SEEN_FILE.read_text(encoding="utf-8"))
+        return set(data if isinstance(data, list) else data.keys())
+    except FileNotFoundError:
+        return set()
+
+
+def send_telegram(event: Event) -> None:
+    token = os.environ["TELEGRAM_BOT_TOKEN"]
+    chat_id = os.environ["TELEGRAM_CHAT_ID"]
+    caption = event.registration_url
+    response = requests.post(
+        f"https://api.telegram.org/bot{token}/sendPhoto",
+        data={"chat_id": chat_id, "photo": event.image_url, "caption": caption},
+        timeout=TIMEOUT,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if not payload.get("ok"):
+        raise RuntimeError(f"Telegram rejected event photo: {payload}")
+
+
+def main() -> int:
+    seen = load_seen()
+    events = scan_sources()
+    print(f"Unique events with original image and registration link: {len(events)}")
+    if os.environ.get("DRY_RUN", "true").lower() == "true":
+        for event in events:
+            print(json.dumps(asdict(event), ensure_ascii=False))
+        return 0
+    for event in events:
+        if event.key in seen:
+            continue
+        try:
+            send_telegram(event)
+            seen.add(event.key)
+            print(f"Sent: {event.title}")
+        except Exception as exc:
+            print(f"Send failed ({event.title}): {exc}")
+    SEEN_FILE.write_text(json.dumps(sorted(seen), indent=2) + "\n", encoding="utf-8")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
