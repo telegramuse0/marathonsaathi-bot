@@ -32,6 +32,8 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
+    env:
+      TELEGRAM_CREDENTIALS_PRESENT: ${{ secrets.TELEGRAM_BOT_TOKEN != '' && secrets.TELEGRAM_CHAT_ID != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -44,12 +46,12 @@ jobs:
       - name: Scan listings and notify Telegram only when manually enabled
         run: python bot.py
         env:
-          DRY_RUN: ${{ github.event_name != 'workflow_dispatch' || inputs.send_telegram != 'true' || secrets.TELEGRAM_BOT_TOKEN == '' || secrets.TELEGRAM_CHAT_ID == '' }}
-          SEND_TELEGRAM_REQUESTED: ${{ github.event_name == 'workflow_dispatch' && inputs.send_telegram == 'true' }}
+          DRY_RUN: ${{ (github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.send_telegram != 'true')) || secrets.TELEGRAM_BOT_TOKEN == '' || secrets.TELEGRAM_CHAT_ID == '' }}
+          SEND_TELEGRAM_REQUESTED: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.send_telegram == 'true') }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       - name: Save duplicate history
-        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.send_telegram == 'true' }}
+        if: ${{ always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.send_telegram == 'true')) && env.TELEGRAM_CREDENTIALS_PRESENT == 'true' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
