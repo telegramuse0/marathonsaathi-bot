@@ -18,7 +18,7 @@ from bs4 import BeautifulSoup
 
 HEADERS = {"User-Agent": "MarathonSaathiBot/2.0 (+event discovery; contact: repo owner)"}
 TIMEOUT = 25
-MAX_SEND_PER_RUN = 5
+MAX_SEND_PER_RUN = 3
 SEEN_FILE = Path(os.environ.get("SEEN_FILE", "seen.json"))
 
 # Add a source here to extend coverage. Listing and detail URL patterns are per-site.

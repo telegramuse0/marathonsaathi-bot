@@ -5,8 +5,8 @@ import bot
 
 
 class ScannerTests(unittest.TestCase):
-    def test_send_batch_limit_is_five(self):
-        self.assertEqual(bot.MAX_SEND_PER_RUN, 5)
+    def test_send_batch_limit_is_three(self):
+        self.assertEqual(bot.MAX_SEND_PER_RUN, 3)
 
     def test_all_seven_listing_sources_are_configured(self):
         self.assertEqual(len(bot.SOURCES), 7)
