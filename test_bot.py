@@ -20,6 +20,14 @@ class ScannerTests(unittest.TestCase):
         links = bot.event_links(source, '<a href="/details.php?slug=hoysala-hustle-2026">Race</a>')
         self.assertEqual(links, ["https://marathontracks.com/details.php?slug=hoysala-hustle-2026"])
 
+    def test_mysamay_accepts_both_event_url_formats(self):
+        source = {"url": "https://mysamay.in/", "host": "mysamay.in", "paths": ("/e/", "/event/info/")}
+        html = '<a href="/e/mysuru_marathon_26?cmeta=abc">Race</a><a href="/event/info/123?cmeta=xyz">Race info</a>'
+        self.assertEqual(bot.event_links(source, html), [
+            "https://mysamay.in/e/mysuru_marathon_26?cmeta=abc",
+            "https://mysamay.in/event/info/123?cmeta=xyz",
+        ])
+
     def test_india_running_card_requires_original_image_and_register_link(self):
         source = {"name": "India Running", "registration_hosts": ("registrations.indiarunning.com",)}
         html = '<article><h3>City Run 2027</h3><img src="/poster.jpg"><a href="https://registrations.indiarunning.com/city-run">Register</a></article>'
