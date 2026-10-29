@@ -29,12 +29,13 @@ class ScannerTests(unittest.TestCase):
         ])
 
     def test_india_running_card_requires_original_image_and_register_link(self):
-        source = {"name": "India Running", "registration_hosts": ("registrations.indiarunning.com",)}
-        html = '<article><h3>City Run 2027</h3><img src="/poster.jpg"><a href="https://registrations.indiarunning.com/city-run">Register</a></article>'
+        source = {"name": "India Running", "host": "indiarunning.com", "paths": ("/event/", "/events/"), "registration_hosts": ("registrations.indiarunning.com",)}
+        html = '<article><h3>City Run 2027</h3><a href="/events/city-run-2027">Event details</a><img src="/poster.jpg"><a href="https://registrations.indiarunning.com/city-run">Register</a></article>'
         from bs4 import BeautifulSoup
-        anchor = BeautifulSoup(html, "html.parser").find("a")
+        anchor = BeautifulSoup(html, "html.parser").find("a", string="Register")
         event = bot._card_event(source, anchor, "https://www.indiarunning.com/city/Kolkata")
         self.assertEqual(event.title, "City Run 2027")
+        self.assertEqual(event.event_url, "https://indiarunning.com/events/city-run-2027")
         self.assertEqual(event.image_url, "https://www.indiarunning.com/poster.jpg")
         self.assertEqual(event.registration_url, "https://registrations.indiarunning.com/city-run")
 
@@ -105,7 +106,7 @@ class ScannerTests(unittest.TestCase):
         url, kwargs = post.call_args.args[0], post.call_args.kwargs
         self.assertTrue(url.endswith("/sendPhoto"))
         self.assertEqual(kwargs["data"]["photo"], event.image_url)
-        self.assertEqual(kwargs["data"]["caption"], event.registration_url)
+        self.assertEqual(kwargs["data"]["caption"], event.event_url)
 
 
 if __name__ == "__main__":

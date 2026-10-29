@@ -125,7 +125,17 @@ def _card_event(source: dict, anchor, listing_url: str) -> Event | None:
     title = heading.get_text(" ", strip=True) if heading else ""
     image = _image_url(card, listing_url)
     date_text = card.get_text(" ", strip=True)
-    return _make_event(source, title, listing_url, href, image, date_text)
+    detail_url = ""
+    for detail_anchor in card.find_all("a", href=True):
+        detail_href = urljoin(listing_url, detail_anchor["href"])
+        detail_parsed = urlparse(detail_href)
+        detail_host = detail_parsed.netloc.lower().removeprefix("www.")
+        if detail_host == source.get("host") and any(detail_parsed.path.lower().startswith(path) for path in source.get("paths", ())):
+            detail_url = normalize_url(detail_href)
+            break
+    # Never link to the whole listing page. Prefer the event detail page; if
+    # the card has none, use its event-specific registration URL.
+    return _make_event(source, title, detail_url or normalize_url(href), href, image, date_text)
 
 
 def _make_event(source: dict, title: str, event_url: str, registration_url: str, image_url: str, date_text: str = "") -> Event | None:
@@ -221,7 +231,7 @@ def is_upcoming(event: Event) -> bool:
 def send_telegram(event: Event) -> None:
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     chat_id = os.environ["TELEGRAM_CHAT_ID"]
-    caption = event.registration_url
+    caption = event.event_url or event.registration_url
     response = requests.post(
         f"https://api.telegram.org/bot{token}/sendPhoto",
         data={"chat_id": chat_id, "photo": event.image_url, "caption": caption},
