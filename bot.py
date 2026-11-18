@@ -20,9 +20,11 @@ HEADERS = {"User-Agent": "MarathonSaathiBot/2.0 (+event discovery; contact: repo
 TIMEOUT = 25
 MAX_SEND_PER_RUN = 3
 SEEN_FILE = Path(os.environ.get("SEEN_FILE", "seen.json"))
+SOURCES_FILE = Path(os.environ.get("SOURCES_FILE", Path(__file__).with_name("sources.json")))
 
-# Add a source here to extend coverage. Listing and detail URL patterns are per-site.
-SOURCES = [
+# Default sources are used to seed sources.json on first run. The admin page edits
+# that JSON file, so scanner changes do not require editing Python code.
+DEFAULT_SOURCES = [
     {"name": "MarathonMitra", "url": "https://marathonmitra.com/city/kolkata", "host": "marathonmitra.com", "paths": ("/events/",)},
     {"name": "India Running", "url": "https://www.indiarunning.com/city/Kolkata", "host": "indiarunning.com", "paths": ("/event/", "/events/"), "registration_hosts": ("registrations.indiarunning.com",)},
     {"name": "MySamay", "url": "https://www.mysamay.in/public/events", "host": "mysamay.in", "paths": ("/e/", "/event/info/"), "allow_empty": True},
@@ -31,6 +33,19 @@ SOURCES = [
     {"name": "MarathonTracks", "url": "https://marathontracks.com/marathons.php", "host": "marathontracks.com", "paths": ("/details.php",)},
     {"name": "runINDIA", "url": "https://www.runindia.in/events", "host": "runindia.in", "paths": ("/events/",)},
 ]
+
+
+def load_sources() -> list[dict]:
+    try:
+        data = json.loads(SOURCES_FILE.read_text(encoding="utf-8"))
+        if not isinstance(data, list) or not all(isinstance(item, dict) for item in data):
+            raise ValueError("sources.json must contain a list of source objects")
+        return data
+    except FileNotFoundError:
+        return [dict(source) for source in DEFAULT_SOURCES]
+
+
+SOURCES = load_sources()
 SCAN_ERRORS: list[str] = []
 
 
@@ -291,4 +306,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

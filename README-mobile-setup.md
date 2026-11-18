@@ -1,19 +1,26 @@
-# Mobile setup
+# Marathon Saathi: mobile setup
 
 ## Telegram secrets
 
 1. Open the repository on GitHub, then go to **Settings → Secrets and variables → Actions**.
-2. Add repository secrets `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`. Never paste either secret into an issue or chat.
+2. Add repository secrets `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID`. Keep both private.
 3. Add the bot to the destination Telegram chat and allow it to send photos.
 
-## Run the scanner
+## Automatic scanner
 
-- Scheduled runs run every three hours in scan-only mode; they never send Telegram messages.
-- To verify the scanner, open **Actions → Marathon Saathi scanner → Run workflow** and leave `send_telegram` set to `false`.
-- To send events, choose `true` only after adding both secrets. Each manual send run is limited to three upcoming events. It sends the listing's original image and registration link only.
+- GitHub Actions checks every two hours. Scheduled runs send future events automatically when both Telegram secrets exist.
+- Each run sends up to three events, with the original event image and its event-specific page link. Already sent events are skipped.
+- A manual run with `send_telegram` set to `false` is scan-only. Choose `true` only when you want an immediate Telegram send.
 
-## Sources
+## Add or edit a website from your phone
 
-The source list is in `bot.py`: MarathonMitra, India Running, MySamay, fstr, RunnersDuniya, MarathonTracks, and runINDIA. Add a site in the `SOURCES` list with its listing URL, hostname, event path prefixes, and optional direct-registration hosts. The scanner logs a warning if a source has no parseable links.
+1. Open this repository on GitHub and create a Codespace on the `main` branch (**Code → Codespaces → Create codespace on main**).
+2. In the Codespace terminal, run `python admin.py --host 0.0.0.0`.
+3. Open the **Ports** tab. Open port `8765`; keep its visibility set to **Private**. Open the forwarded address on your phone.
+4. Paste the access code printed in the terminal.
+5. Fill in the website name, listing URL, domain, and event path patterns. Tap **Preview scan** to see detected event images and exact event-page links.
+6. Tap **Save website**, then **Publish config to GitHub**. This publishes only `sources.json`; Actions runs a scan-only check.
 
-The bot requires an original event image, a registration link, and a future event date. It skips records without them. It does not generate posters or post to Facebook or Instagram.
+Select a saved site to edit it, or tap **New** to add one. The preview checks the listing and up to eight event pages; it never sends Telegram messages. Stop the server or close the Codespace when finished.
+
+The bot sends an event only when it finds an original event image, an event-specific registration link, and a future date. It does not generate posters or post to Facebook or Instagram.
